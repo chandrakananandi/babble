@@ -138,6 +138,7 @@ impl Teachable for CAD {
     }
 }
 
+// TODO: add CAD rewrites from Szalinski
 lazy_static! {
     pub(crate) static ref LIFT_LIB_REWRITES: &'static [Rewrite<AstNode<CAD>, ()>] = vec![ ]
     .leak();
