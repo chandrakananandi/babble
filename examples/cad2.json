@@ -1,0 +1,6 @@
+{
+  "programs": [
+    "(scale 1 2 3 sphere)",
+    "(scale 1 2 3 cube)"
+  ]
+}

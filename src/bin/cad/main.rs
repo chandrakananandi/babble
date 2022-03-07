@@ -14,24 +14,30 @@
 
 use babble::{
     ast_node::{AstNode, Expr},
+    extract::{
+        beam::{less_dumb_extractor, PartialLibCost},
+        lift_libs, true_cost,
+    },
     learn::LearnedLibrary,
-    sexp::Sexp,
+    sexp::{self, Sexp},
 };
 use clap::Clap;
-use egg::{AstSize, CostFunction, EGraph, Extractor, RecExpr, Rewrite, Runner};
-use log::info;
+use egg::{AstSize, CostFunction, EGraph, LanguageChildren, RecExpr, Rewrite, Runner};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use serde::__private::de::IdentifierDeserializer;
+use serde_json::Value;
 use std::{
-    convert::TryInto,
-    fs,
+    convert::{self, TryInto, TryFrom},
+    fs::{self, File},
     io::{self, Read},
     path::PathBuf,
+    time::{Duration, Instant},
 };
 
-use crate::lang::CAD;
-
-mod eval;
+use crate::lang::{CADJson, CAD};
 mod lang;
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clap)]
 #[clap(version, author, about)]
 struct Opts {
@@ -39,9 +45,13 @@ struct Opts {
     #[clap(parse(from_os_str))]
     file: Option<PathBuf>,
 
-    /// Evaluate the input file and output it as an SVG.
+    /// Enables pretty-printing of JSON output.
     #[clap(long)]
-    svg: bool,
+    pretty: bool,
+
+    /// The maximum number of programs to anti-unify.
+    #[clap(long)]
+    limit: Option<usize>,
 }
 
 fn main() {
@@ -59,45 +69,116 @@ fn main() {
         )
         .expect("Error reading input");
 
-    let expr: Expr<_> = Sexp::parse(&input)
-        .expect("Failed to parse sexp")
-        .try_into()
-        .expect("Input is not a valid expression");
+    let input: CADJson = serde_json::from_str(&input).expect("Error parsing JSON input");
+    let mut wtr = csv::Writer::from_path("target/cad-res.csv").unwrap();
 
-    let initial_expr: RecExpr<_> = expr.into();
-    let initial_cost = AstSize.cost_rec(&initial_expr);
+    let run_beam_exp = |limit: usize, final_beams, inter_beams, wtr: &mut csv::Writer<fs::File>| {
+        if final_beams > inter_beams {
+            return;
+        }
 
-    println!("Initial expression (cost {}):", initial_cost);
-    println!("{}", initial_expr.pretty(100));
-    println!();
+        println!(
+            "limit: {}, final_beams: {}, inter_beams: {}",
+            limit, final_beams, inter_beams
+        );
 
-    let mut egraph: EGraph<AstNode<CAD>, ()> = EGraph::default();
-    let root = egraph.add_expr(&initial_expr);
-    egraph.rebuild();
+        let start_time = Instant::now();
+        let timeout = Duration::from_secs(60 * 100000);
 
-    let learned_lib = LearnedLibrary::from(&egraph);
-    let lib_rewrites: Vec<Rewrite<_, ()>> = learned_lib.rewrites().collect();
-    let egraph = Runner::default()
-        .with_egraph(egraph)
-        .with_iter_limit(1)
-        .run(&lib_rewrites)
-        .egraph;
-    let runner = Runner::default()
-        .with_egraph(egraph)
-        .run(*lang::LIFT_LIB_REWRITES);
-    let stop_reason = runner.stop_reason.unwrap_or_else(|| unreachable!());
-    info!("Stop reason: {:?}", stop_reason);
-    info!("Number of iterations: {}", runner.iterations.len());
+        let mut aeg = EGraph::new(PartialLibCost::new(final_beams, inter_beams));
+        let programs: Vec<Expr<CAD>> = input
+            .programs
+            .clone()
+            .into_iter()
+            .map(|p| Expr::try_from(Sexp::parse(&p).unwrap()).unwrap())
+            .take(limit)
+            .collect();
+        let mut roots = Vec::with_capacity(programs.len());
+        for expr in programs.iter().cloned().map(RecExpr::from) {
+            let root = aeg.add_expr(&expr);
+            roots.push(root);
+        }
+        aeg.rebuild();
 
-    let egraph = runner.egraph;
-    info!("Number of nodes: {}", egraph.total_size());
-    let (final_cost, final_expr) = Extractor::new(&egraph, AstSize).find_best(root);
+        let runner = Runner::<_, _, ()>::new(PartialLibCost::new(final_beams, inter_beams))
+            .with_egraph(aeg)
+            .with_time_limit(timeout.saturating_sub(start_time.elapsed()));
 
-    println!("Final expression (cost {}):", final_cost);
-    println!("{}", final_expr.pretty(100));
-    println!();
+        let aeg = runner.egraph;
 
-    #[allow(clippy::cast_precision_loss)]
-    let compression_ratio = (initial_cost as f64) / (final_cost as f64);
-    println!("Compression ratio: {:.2}", compression_ratio);
+        let learned_lib = LearnedLibrary::from(&aeg);
+        let lib_rewrites: Vec<_> = learned_lib.rewrites().collect();
+
+        println!("Found {} antiunifications", lib_rewrites.len());
+
+        println!("Anti-unifying");
+        let runner = Runner::<_, _, ()>::new(PartialLibCost::new(final_beams, inter_beams))
+            .with_egraph(aeg.clone())
+            .with_iter_limit(1)
+            .with_time_limit(timeout.saturating_sub(start_time.elapsed()))
+            .with_node_limit(1_000_000)
+            .run(lib_rewrites.iter());
+
+        println!("Stop reason: {:?}", runner.stop_reason.unwrap());
+
+        let mut egraph = runner.egraph;
+        println!("Number of nodes: {}", egraph.total_size());
+
+        // Add the root combine node.
+        let root = egraph.add(AstNode::new(CAD::Combine, roots.iter().copied()));
+
+        let mut cs = egraph[egraph.find(root)].data.clone();
+        cs.set.sort_unstable_by_key(|elem| elem.full_cost);
+
+        println!("upper bound ('full') cost: {}", cs.set[0].full_cost);
+        println!();
+
+        println!("extracting (final, lifted libs)");
+        let (lifted, final_cost) = cs
+            .set
+            .par_iter()
+            .map(|ls| {
+                // Add the root combine node again
+                let fin = Runner::<_, _, ()>::new(PartialLibCost::new(0, 0))
+                    .with_egraph(aeg.clone())
+                    .with_iter_limit(1)
+                    .run(
+                        lib_rewrites
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, _)| {
+                                ls.libs.iter().any(|x| *i == x.0 .0)
+                            })
+                            .map(|x| x.1),
+                    )
+                    .egraph;
+
+                let best = less_dumb_extractor(&fin, root);
+
+                let lifted = lift_libs(best);
+                let final_cost = true_cost(lifted.clone()) - 1;
+
+                (lifted, final_cost)
+            })
+            .min_by_key(|x: &(RecExpr<AstNode<CAD>>, usize)| x.1)
+            .unwrap();
+
+        println!("{}", lifted.pretty(100));
+        println!("final cost: {}", final_cost);
+        println!();
+
+        wtr.serialize((
+            limit,
+            "beam",
+            timeout.as_secs(),
+            final_beams,
+            inter_beams,
+            final_cost,
+            start_time.elapsed().as_secs_f64(),
+        ))
+        .unwrap();
+        wtr.flush().unwrap();
+    };
+
+    run_beam_exp(20, 25, 25, &mut wtr);
 }

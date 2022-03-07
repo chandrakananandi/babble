@@ -1,23 +1,30 @@
 //! The AST defining a 3D CAD language.
 
 use babble::{
-    ast_node::{Arity, AstNode},
+    ast_node::{Arity, AstNode, Expr},
     learn::{LibId, ParseLibIdError},
     teachable::{BindingExpr, DeBruijnIndex, Teachable},
 };
-use egg::Rewrite;
-use lazy_static::lazy_static;
-use ordered_float::NotNan;
+use egg::{Rewrite, RecExpr};
+use ref_cast::RefCast;
+use serde::{Serialize, Deserialize};
 use std::{
     fmt::{self, Display, Formatter},
     num::ParseIntError,
     str::FromStr,
 };
+use lazy_static::lazy_static;
+
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct CADJson {
+    pub(crate) programs: Vec<String>
+}
 
 /// The operations/AST nodes of the "Smiley" language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum CAD {
-    Int(i32),
+    Int(i32), // for now, but we will need floats for actual eval.
     Cube,
     Sphere,
     Translate,
@@ -31,6 +38,7 @@ pub(crate) enum CAD {
     Apply,
     Var(DeBruijnIndex),
     Shift,
+    Combine
 }
 
 impl Arity for CAD {
@@ -40,9 +48,9 @@ impl Arity for CAD {
             CAD::Cube => 0,
             CAD::Sphere => 0,
             CAD::Var(_) => 0,
-            CAD::Translate => 3,
-            CAD::Scale => 3,
-            CAD::Rotate => 3,
+            CAD::Translate => 4,
+            CAD::Scale => 4,
+            CAD::Rotate => 4,
             CAD::Union => 2,
             CAD::Diff => 2,
             CAD::Lambda => 1,
@@ -50,6 +58,14 @@ impl Arity for CAD {
             CAD::LibVar(_) => 0,
             CAD::Apply => 2,
             CAD::Shift => 1,
+            CAD::Combine => 1,
+        }
+    }
+
+    fn max_arity(&self) -> Option<usize> {
+        match self {
+            CAD::Combine => None,
+            x => Some(x.min_arity()),
         }
     }
 }
@@ -71,9 +87,11 @@ impl Display for CAD {
             CAD::Apply => f.write_str("@"),
             CAD::Var(i) => write!(f, "{}", i),
             CAD::Shift => f.write_str("shift"),
+            CAD::Combine => f.write_str("combine"),
         }
     }
 }
+
 
 impl FromStr for CAD {
     type Err = ParseIntError;
@@ -137,6 +155,7 @@ impl Teachable for CAD {
         Some(binding_expr)
     }
 }
+
 
 // TODO: add CAD rewrites from Szalinski
 lazy_static! {
