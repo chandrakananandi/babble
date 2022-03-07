@@ -95,7 +95,7 @@ fn main() {
             .collect();
         let initial_cost: usize = programs.iter().map(Expr::len).sum();
         let mut roots = Vec::with_capacity(programs.len());
-        
+
         for expr in programs.iter().cloned().map(RecExpr::from) {
             let root = aeg.add_expr(&expr);
             roots.push(root);
@@ -185,5 +185,22 @@ fn main() {
         wtr.flush().unwrap();
     };
 
-    run_beam_exp(20, 250, 250, &mut wtr);
+    for limit in [20] {
+        for beam_size in [25, 50, 100, 200] {
+            run_beam_exp(limit, beam_size, beam_size, &mut wtr);
+        }
+    }
 }
+
+
+// (union cuboid (apply fold (lambda ())))
+
+// (apply map (lambda ()))
+
+// (Union
+//     (Cylinder [1, 5, 5])
+//     (Fold Union
+//     (Map ( i 6)
+//     (Rotate [0, 0, 60i]
+//     ( Translate [1, −0.5, 0]
+//     (Cuboid [10, 1, 1]))))))

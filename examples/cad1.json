@@ -2,6 +2,7 @@
   "programs": [
     "sphere",
     "cube",
-    "cuboid"
+    "cuboid",
+    "cylinder"
   ]
 }
