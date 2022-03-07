@@ -27,6 +27,7 @@ pub(crate) enum CAD {
     Int(i32), // for now, but we will need floats for actual eval.
     Cube,
     Sphere,
+    Cuboid,
     Translate,
     Scale,
     Rotate,
@@ -46,6 +47,7 @@ impl Arity for CAD {
         match self {
             CAD::Int(_) => 0,
             CAD::Cube => 0,
+            CAD::Cuboid => 0,
             CAD::Sphere => 0,
             CAD::Var(_) => 0,
             CAD::Translate => 4,
@@ -75,6 +77,7 @@ impl Display for CAD {
         match self {
             CAD::Int(n) => n.fmt(f),
             CAD::Cube => f.write_str("cube"),
+            CAD::Cuboid => f.write_str("cuboid"),
             CAD::Sphere => f.write_str("sphere"),
             CAD::Translate => f.write_str("translate"),
             CAD::Scale => f.write_str("scale"),
@@ -98,6 +101,7 @@ impl FromStr for CAD {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let cad = match s {
             "cube" => Self::Cube,
+            "cuboid" => Self::Cuboid,
             "sphere" => Self::Sphere,
             "translate" => Self::Translate,
             "rotate" => Self::Rotate,

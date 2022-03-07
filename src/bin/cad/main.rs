@@ -93,7 +93,9 @@ fn main() {
             .map(|p| Expr::try_from(Sexp::parse(&p).unwrap()).unwrap())
             .take(limit)
             .collect();
+        let initial_cost: usize = programs.iter().map(Expr::len).sum();
         let mut roots = Vec::with_capacity(programs.len());
+        
         for expr in programs.iter().cloned().map(RecExpr::from) {
             let root = aeg.add_expr(&expr);
             roots.push(root);
@@ -106,6 +108,8 @@ fn main() {
 
         let aeg = runner.egraph;
         println!("Compressing {} programs", roots.len());
+        println!("Starting cost: {}", initial_cost);
+
         let learned_lib = LearnedLibrary::from(&aeg);
         let lib_rewrites: Vec<_> = learned_lib.rewrites().collect();
 
@@ -181,5 +185,5 @@ fn main() {
         wtr.flush().unwrap();
     };
 
-    run_beam_exp(20, 25, 25, &mut wtr);
+    run_beam_exp(20, 250, 250, &mut wtr);
 }

@@ -1,6 +1,7 @@
 {
   "programs": [
     "sphere",
-    "cube"
+    "cube",
+    "cuboid"
   ]
 }
