@@ -386,7 +386,6 @@ pub fn less_dumb_extractor<
         };
 
         // First, skip through each repeated lib.
-        println!("ID: {}, cur ix: {}, node_vecs {:?}", id, cur_ix, node_vecs);
         let mut node = &node_vecs[&id][*cur_ix];
         let mut is_lib = false;
         loop {

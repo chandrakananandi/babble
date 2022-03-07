@@ -105,7 +105,7 @@ fn main() {
             .with_time_limit(timeout.saturating_sub(start_time.elapsed()));
 
         let aeg = runner.egraph;
-
+        println!("Compressing {} programs", roots.len());
         let learned_lib = LearnedLibrary::from(&aeg);
         let lib_rewrites: Vec<_> = learned_lib.rewrites().collect();
 
@@ -139,7 +139,7 @@ fn main() {
             .par_iter()
             .map(|ls| {
                 // Add the root combine node again
-                let fin = Runner::<_, _, ()>::new(PartialLibCost::new(0, 0))
+                let mut fin = Runner::<_, _, ()>::new(PartialLibCost::new(0, 0))
                     .with_egraph(aeg.clone())
                     .with_iter_limit(1)
                     .run(
@@ -153,6 +153,7 @@ fn main() {
                     )
                     .egraph;
 
+                let root = fin.add(AstNode::new(CAD::Combine, roots.iter().copied()));
                 let best = less_dumb_extractor(&fin, root);
 
                 let lifted = lift_libs(best);
